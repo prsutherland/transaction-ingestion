@@ -5,5 +5,20 @@ edition = "2024"
 
 [dependencies]
 csv = "1"
-rust_decimal = "1"
+rust_decimal = "1.40.0"
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+criterion = "0.7"
+
+[[bench]]
+name = "engine_bench"
+harness = false
+
+[[bench]]
+name = "full_bench"
+harness = false
+
+[[bench]]
+name = "upper_bound_bench"
+harness = false
