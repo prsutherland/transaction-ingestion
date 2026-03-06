@@ -121,6 +121,8 @@ fn hash(account: u16) -> u16 {
 Once complete, `main.rs` can call `engine.to_csv()` on all `Engine` instances.
 This is why `main.rs` writes the headers and not `Engine`.
 
+Check out the `transactions-go-brrr` branch for an experiment in parallelism.
+
 ### Memory usage vs persistance
 
 To avoid holding all transactions in memory, the internals of `Engine` can
