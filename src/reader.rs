@@ -101,8 +101,7 @@ impl<R: BufRead> CsvU16RowReader<R> {
                                 first_digit_found = true;
                             } else if first_digit_found
                                 && !last_digit_found
-                                && *b >= b'0'
-                                && *b <= b'9'
+                                && (*b < b'0' || *b > b'9')
                             {
                                 last_digit = self.current_row.len();
                                 last_digit_found = true;
@@ -155,4 +154,24 @@ fn parse_u16_ascii(bytes: &[u8]) -> Option<u16> {
         }
     }
     Some(n as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CsvU16RowReader;
+    use std::io::Cursor;
+
+    #[test]
+    fn parses_full_client_id_for_routing() {
+        let input = b"type,client,tx,amount\ndeposit,123,1,1.0\n";
+        let mut reader = CsvU16RowReader::new(Cursor::new(input.as_slice()));
+
+        let record = reader
+            .next()
+            .expect("reader should parse first data row")
+            .expect("reader should return one data row");
+
+        assert_eq!(record.0, 123);
+        assert_eq!(record.1, b"deposit,123,1,1.0");
+    }
 }
