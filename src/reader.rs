@@ -1,5 +1,5 @@
-use std::io::BufRead;
 use std::error::Error;
+use std::io::BufRead;
 
 pub struct CsvU16RowReader<R: BufRead> {
     reader: R,

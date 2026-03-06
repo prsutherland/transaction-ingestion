@@ -1,58 +1,118 @@
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::error::Error;
-use std::io::{self, BufRead, BufReader};
 use std::fs::File;
+use std::io::{self, BufRead, BufReader, Cursor};
+use std::path::Path;
 use std::thread;
 
 use crate::engine::Engine;
 use crate::reader::CsvU16RowReader;
-use crate::transaction::{TransactionRecord, parse_transaction_row_bytes};
+use crate::transaction::parse_transaction_row_bytes;
 
-
-pub fn run(reader: BufReader<File>, workers: usize) -> Result<(), Box<dyn Error>> {
-    run_inner(reader, workers, true)
-}
-
-pub fn run_without_output(reader: BufReader<File>, workers: usize) -> Result<(), Box<dyn Error>> {
-    run_inner(reader, workers, false)
+pub fn run(path: &Path, workers: usize) -> Result<(), Box<dyn Error>> {
+    run_path_inner(path, workers, true)
 }
 
 pub fn run_reader_without_output<R: BufRead>(
     reader: R,
     workers: usize,
 ) -> Result<(), Box<dyn Error>> {
-    run_inner(reader, workers, false)
+    run_reader_inner(reader, workers, false)
 }
 
-fn run_inner<R: BufRead>(reader: R, workers: usize, write_output: bool) -> Result<(), Box<dyn Error>> {
+fn run_path_inner(path: &Path, workers: usize, write_output: bool) -> Result<(), Box<dyn Error>> {
+    assert!(workers > 0);
+    let mut files = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        files.push(File::open(path)?);
+    }
+    run_workers(files, workers, write_output)
+}
+
+fn run_reader_inner<R: BufRead>(
+    reader: R,
+    workers: usize,
+    write_output: bool,
+) -> Result<(), Box<dyn Error>> {
     assert!(workers > 0);
 
-    // One channel per worker: avoids contention from many consumers on one queue.
-    let mut txs: Vec<Sender<TransactionRecord>> = Vec::with_capacity(workers);
+    let mut raw = Vec::with_capacity(1 << 20);
+    let mut reader = reader;
+    reader.read_to_end(&mut raw)?;
+    let shared = raw.as_slice();
+
+    let (done_tx, done_rx) = bounded::<()>(workers);
+    let mut dump_txs: Vec<Sender<()>> = Vec::with_capacity(workers);
+
+    thread::scope(|scope| {
+        for thread_idx in 0..workers {
+            let worker_done_tx = done_tx.clone();
+            let (dump_tx, dump_rx) = bounded::<()>(1);
+            dump_txs.push(dump_tx);
+            scope.spawn(move || {
+                worker_loop_reader(
+                    shared,
+                    workers,
+                    thread_idx,
+                    write_output,
+                    worker_done_tx,
+                    dump_rx,
+                )
+            });
+        }
+        drop(done_tx);
+
+        for _ in 0..workers {
+            done_rx.recv().expect("worker hung up before completion");
+        }
+
+        if write_output {
+            let writer = io::stdout();
+            let mut csv_writer = csv::WriterBuilder::new()
+                .has_headers(false)
+                .from_writer(writer);
+            csv_writer.write_record(["client", "available", "held", "total", "locked"])?;
+            csv_writer.flush()?;
+        }
+
+        for tx in dump_txs {
+            tx.send(()).expect("worker hung up before dump signal");
+        }
+
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+
+    Ok(())
+}
+
+fn run_workers(files: Vec<File>, workers: usize, write_output: bool) -> Result<(), Box<dyn Error>> {
+    assert_eq!(files.len(), workers);
+    let (done_tx, done_rx) = bounded::<()>(workers);
+    let mut dump_txs: Vec<Sender<()>> = Vec::with_capacity(workers);
     let mut handles: Vec<thread::JoinHandle<()>> = Vec::with_capacity(workers);
 
-    for _ in 0..workers {
-        let (tx, rx) = bounded::<TransactionRecord>(8192);
-        txs.push(tx);
-        handles.push(thread::spawn(move || worker(rx, write_output)));
+    for (thread_idx, file) in files.into_iter().enumerate() {
+        let worker_done_tx = done_tx.clone();
+        let (dump_tx, dump_rx) = bounded::<()>(1);
+        dump_txs.push(dump_tx);
+        handles.push(thread::spawn(move || {
+            worker_loop_file(
+                file,
+                workers,
+                thread_idx,
+                write_output,
+                worker_done_tx,
+                dump_rx,
+            )
+        }));
     }
+    drop(done_tx);
 
-    let mut it = CsvU16RowReader::new(reader);
-    while let Some((id, row_bytes)) = it.next()? {
-        let record = match parse_transaction_row_bytes(row_bytes) {
-            Ok(record) => record,
-            Err(e) => {
-                eprintln!("error parsing transaction: {}", e);
-                continue;
-            }
-        };
-
-        let shard = (id as usize) % workers;
-        txs[shard].send(record).expect("worker hung up");
+    for _ in 0..workers {
+        done_rx.recv().expect("worker hung up before completion");
     }
 
     if write_output {
-        // Write headers
         let writer = io::stdout();
         let mut csv_writer = csv::WriterBuilder::new()
             .has_headers(false)
@@ -61,19 +121,77 @@ fn run_inner<R: BufRead>(reader: R, workers: usize, write_output: bool) -> Resul
         csv_writer.flush()?;
     }
 
-    // Close channels (which will signal workers to write their results) and join workers.
-    for (tx, h) in txs.into_iter().zip(handles.into_iter()) {
-        drop(tx);
-        let _ = h.join().expect("worker panicked");
+    for tx in dump_txs {
+        tx.send(()).expect("worker hung up before dump signal");
+    }
+
+    for h in handles {
+        h.join().expect("worker panicked");
     }
 
     Ok(())
 }
 
-fn worker(rx: Receiver<TransactionRecord>, write_output: bool) {
-    let mut engine = Engine::new();
+fn worker_loop_file(
+    file: File,
+    workers: usize,
+    thread_idx: usize,
+    write_output: bool,
+    done_tx: Sender<()>,
+    dump_rx: Receiver<()>,
+) {
+    let reader = BufReader::with_capacity(1 << 20, file);
+    worker_loop(reader, workers, thread_idx, write_output, done_tx, dump_rx);
+}
 
-    while let Ok(record) = rx.recv() {
+fn worker_loop_reader(
+    bytes: &[u8],
+    workers: usize,
+    thread_idx: usize,
+    write_output: bool,
+    done_tx: Sender<()>,
+    dump_rx: Receiver<()>,
+) {
+    let reader = Cursor::new(bytes);
+    worker_loop(reader, workers, thread_idx, write_output, done_tx, dump_rx);
+}
+
+fn worker_loop<R: BufRead>(
+    reader: R,
+    workers: usize,
+    thread_idx: usize,
+    write_output: bool,
+    done_tx: Sender<()>,
+    dump_rx: Receiver<()>,
+) {
+    let mut engine = Engine::new();
+    let mut it = CsvU16RowReader::new(reader);
+
+    loop {
+        let next = match it.next() {
+            Ok(next) => next,
+            Err(e) => {
+                eprintln!("error reading transaction stream: {}", e);
+                continue;
+            }
+        };
+
+        let Some((id, row_bytes)) = next else {
+            break;
+        };
+
+        if (id as usize) % workers != thread_idx {
+            continue;
+        }
+
+        let record = match parse_transaction_row_bytes(row_bytes) {
+            Ok(record) => record,
+            Err(e) => {
+                eprintln!("error parsing transaction: {}", e);
+                continue;
+            }
+        };
+
         if let Err(e) = engine.process_transaction(&record) {
             eprintln!(
                 "error processing account={} transaction={}: {}",
@@ -81,6 +199,13 @@ fn worker(rx: Receiver<TransactionRecord>, write_output: bool) {
             );
         }
     }
+
+    done_tx
+        .send(())
+        .expect("controller hung up before completion");
+    dump_rx
+        .recv()
+        .expect("controller hung up before dump signal");
 
     if write_output {
         // Write results to stdout
