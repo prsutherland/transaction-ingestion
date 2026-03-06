@@ -120,12 +120,7 @@ mod tests {
         let mut engine = Engine::new();
 
         engine
-            .process_transaction(&record(
-                1,
-                1,
-                TransactionType::Deposit,
-                Decimal::TEN,
-            ))
+            .process_transaction(&record(1, 1, TransactionType::Deposit, Decimal::TEN))
             .unwrap();
         engine
             .process_transaction(&record(
@@ -159,12 +154,7 @@ mod tests {
             ))
             .unwrap();
         engine
-            .process_transaction(&record(
-                2,
-                1,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(2, 1, TransactionType::Dispute, Decimal::ZERO))
             .unwrap();
 
         let mut reader = csv_output(&engine);
@@ -190,21 +180,11 @@ mod tests {
             ))
             .unwrap();
         engine
-            .process_transaction(&record(
-                3,
-                1,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(3, 1, TransactionType::Dispute, Decimal::ZERO))
             .unwrap();
 
         let err = engine
-            .process_transaction(&record(
-                3,
-                1,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(3, 1, TransactionType::Dispute, Decimal::ZERO))
             .unwrap_err();
         assert_eq!(err.to_string(), "transaction already disputed");
 
@@ -239,20 +219,10 @@ mod tests {
             ))
             .unwrap();
         engine
-            .process_transaction(&record(
-                4,
-                1,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(4, 1, TransactionType::Dispute, Decimal::ZERO))
             .unwrap();
         engine
-            .process_transaction(&record(
-                4,
-                2,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(4, 2, TransactionType::Dispute, Decimal::ZERO))
             .unwrap();
 
         let mut reader = csv_output(&engine);
@@ -279,28 +249,13 @@ mod tests {
             ))
             .unwrap();
         engine
-            .process_transaction(&record(
-                5,
-                1,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(5, 1, TransactionType::Dispute, Decimal::ZERO))
             .unwrap();
         engine
-            .process_transaction(&record(
-                5,
-                1,
-                TransactionType::Resolve,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(5, 1, TransactionType::Resolve, Decimal::ZERO))
             .unwrap();
         engine
-            .process_transaction(&record(
-                5,
-                1,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(5, 1, TransactionType::Dispute, Decimal::ZERO))
             .unwrap();
 
         let mut reader = csv_output(&engine);
@@ -321,12 +276,7 @@ mod tests {
         account.locked = true;
 
         let err = engine
-            .process_transaction(&record(
-                6,
-                2,
-                TransactionType::Deposit,
-                Decimal::ONE,
-            ))
+            .process_transaction(&record(6, 2, TransactionType::Deposit, Decimal::ONE))
             .unwrap_err();
         assert_eq!(err.to_string(), "account is locked");
 
@@ -348,12 +298,7 @@ mod tests {
         account.locked = true;
 
         let err = engine
-            .process_transaction(&record(
-                7,
-                1,
-                TransactionType::Withdrawal,
-                Decimal::ONE,
-            ))
+            .process_transaction(&record(7, 1, TransactionType::Withdrawal, Decimal::ONE))
             .unwrap_err();
         assert_eq!(err.to_string(), "account is locked");
 
@@ -401,36 +346,16 @@ mod tests {
         account.locked = true;
 
         engine
-            .process_transaction(&record(
-                8,
-                1,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(8, 1, TransactionType::Dispute, Decimal::ZERO))
             .unwrap();
         engine
-            .process_transaction(&record(
-                8,
-                2,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(8, 2, TransactionType::Dispute, Decimal::ZERO))
             .unwrap();
         engine
-            .process_transaction(&record(
-                8,
-                1,
-                TransactionType::Resolve,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(8, 1, TransactionType::Resolve, Decimal::ZERO))
             .unwrap();
         engine
-            .process_transaction(&record(
-                8,
-                2,
-                TransactionType::Chargeback,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(8, 2, TransactionType::Chargeback, Decimal::ZERO))
             .unwrap();
 
         let mut reader = csv_output(&engine);
@@ -448,20 +373,10 @@ mod tests {
         let mut engine = Engine::new();
 
         engine
-            .process_transaction(&record(
-                9,
-                1,
-                TransactionType::Deposit,
-                Decimal::ONE,
-            ))
+            .process_transaction(&record(9, 1, TransactionType::Deposit, Decimal::ONE))
             .unwrap();
         let err = engine
-            .process_transaction(&record(
-                9,
-                2,
-                TransactionType::Withdrawal,
-                Decimal::TWO,
-            ))
+            .process_transaction(&record(9, 2, TransactionType::Withdrawal, Decimal::TWO))
             .unwrap_err();
         assert_eq!(err.to_string(), "insufficient funds");
     }
@@ -486,12 +401,7 @@ mod tests {
         let mut engine = Engine::new();
 
         engine
-            .process_transaction(&record(
-                11,
-                1,
-                TransactionType::Deposit,
-                Decimal::TWO,
-            ))
+            .process_transaction(&record(11, 1, TransactionType::Deposit, Decimal::TWO))
             .unwrap();
 
         let err = engine
@@ -527,21 +437,11 @@ mod tests {
             ))
             .unwrap();
         engine
-            .process_transaction(&record(
-                12,
-                2,
-                TransactionType::Withdrawal,
-                Decimal::ONE,
-            ))
+            .process_transaction(&record(12, 2, TransactionType::Withdrawal, Decimal::ONE))
             .unwrap();
 
         let err = engine
-            .process_transaction(&record(
-                12,
-                2,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(12, 2, TransactionType::Dispute, Decimal::ZERO))
             .unwrap_err();
         assert_eq!(err.to_string(), "transaction is not a deposit");
 
@@ -560,12 +460,7 @@ mod tests {
         // Assumption: invalid lifecycle events should not materialize empty accounts.
         let mut engine = Engine::new();
         let err = engine
-            .process_transaction(&record(
-                13,
-                99,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(13, 99, TransactionType::Dispute, Decimal::ZERO))
             .unwrap_err();
         assert_eq!(err.to_string(), "transaction not found");
 
@@ -579,12 +474,7 @@ mod tests {
         // Assumption: invalid lifecycle events should not materialize empty accounts.
         let mut engine = Engine::new();
         let err = engine
-            .process_transaction(&record(
-                14,
-                99,
-                TransactionType::Resolve,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(14, 99, TransactionType::Resolve, Decimal::ZERO))
             .unwrap_err();
         assert_eq!(err.to_string(), "transaction not found");
 
@@ -598,12 +488,7 @@ mod tests {
         // Assumption: invalid lifecycle events should not materialize empty accounts.
         let mut engine = Engine::new();
         let err = engine
-            .process_transaction(&record(
-                15,
-                99,
-                TransactionType::Chargeback,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(15, 99, TransactionType::Chargeback, Decimal::ZERO))
             .unwrap_err();
         assert_eq!(err.to_string(), "transaction not found");
 
@@ -616,12 +501,7 @@ mod tests {
     fn dispute_requires_existing_deposit_transaction() {
         let mut engine = Engine::new();
         let err = engine
-            .process_transaction(&record(
-                10,
-                99,
-                TransactionType::Dispute,
-                Decimal::ZERO,
-            ))
+            .process_transaction(&record(10, 99, TransactionType::Dispute, Decimal::ZERO))
             .unwrap_err();
 
         assert_eq!(err.to_string(), "transaction not found");

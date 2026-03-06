@@ -26,11 +26,61 @@ pub struct TransactionRecord {
 ///
 /// This hot path avoids full serde-row deserialization to reduce ingest overhead while
 /// keeping validation at the input boundary. 16.7% faster than the serde deserialization.
-pub fn parse_transaction_record(raw: &csv::ByteRecord) -> Result<TransactionRecord, Box<dyn Error>> {
+pub fn parse_transaction_record(
+    raw: &csv::ByteRecord,
+) -> Result<TransactionRecord, Box<dyn Error>> {
     let tx_type = parse_tx_type(required_field(raw, 0, "type")?)?;
     let client = parse_u16(required_field(raw, 1, "client")?)?;
     let tx = parse_u32(required_field(raw, 2, "tx")?)?;
     let amount = parse_amount(raw.get(3))?;
+
+    Ok(TransactionRecord {
+        client,
+        tx,
+        tx_type,
+        amount,
+    })
+}
+
+/// Parse a transaction record directly from a CSV row byte slice.
+///
+/// This parser is intentionally narrow for the hot path in router fan-out:
+/// it expects unquoted, comma-delimited rows and trims ASCII whitespace
+/// around fields.
+pub fn parse_transaction_row_bytes(row: &[u8]) -> Result<TransactionRecord, Box<dyn Error>> {
+    let mut fields: [&[u8]; 4] = [&[]; 4];
+    let mut start = 0usize;
+    let mut field_idx = 0usize;
+
+    for (i, b) in row.iter().enumerate() {
+        if *b == b',' {
+            if field_idx >= 4 {
+                return Err("too many fields".into());
+            }
+            fields[field_idx] = trim_ascii(&row[start..i]);
+            field_idx += 1;
+            start = i + 1;
+        }
+    }
+
+    if field_idx >= 4 {
+        return Err("too many fields".into());
+    }
+    fields[field_idx] = trim_ascii(&row[start..]);
+    field_idx += 1;
+
+    if field_idx < 3 {
+        return Err("missing required fields".into());
+    }
+
+    let tx_type = parse_tx_type(fields[0])?;
+    let client = parse_u16_ascii(fields[1]).ok_or("invalid client")?;
+    let tx = parse_u32_ascii(fields[2]).ok_or("invalid tx")?;
+    let amount = if field_idx >= 4 {
+        parse_amount(Some(fields[3]))?
+    } else {
+        parse_amount(None)?
+    };
 
     Ok(TransactionRecord {
         client,
@@ -86,6 +136,57 @@ fn parse_amount(bytes: Option<&[u8]>) -> Result<Option<Decimal>, Box<dyn Error>>
         None | Some(b"") => Ok(None),
         Some(bytes) => to_decimal(str::from_utf8(bytes)?),
     }
+}
+
+#[inline]
+fn trim_ascii(bytes: &[u8]) -> &[u8] {
+    let mut start = 0usize;
+    let mut end = bytes.len();
+
+    while start < end && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    while end > start && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+
+    &bytes[start..end]
+}
+
+#[inline]
+fn parse_u16_ascii(bytes: &[u8]) -> Option<u16> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut n: u32 = 0;
+    for &b in bytes {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        n = n * 10 + (b - b'0') as u32;
+        if n > u16::MAX as u32 {
+            return None;
+        }
+    }
+    Some(n as u16)
+}
+
+#[inline]
+fn parse_u32_ascii(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut n: u64 = 0;
+    for &b in bytes {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        n = (n * 10) + (b - b'0') as u64;
+        if n > u32::MAX as u64 {
+            return None;
+        }
+    }
+    Some(n as u32)
 }
 
 fn to_decimal(raw: &str) -> Result<Option<Decimal>, Box<dyn Error>> {

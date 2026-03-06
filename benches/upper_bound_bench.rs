@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use transaction_ingestion::reader::CsvU16RowReader;
 
 fn build_csv_input(iterations: u32) -> Vec<u8> {
     let mut csv_input = String::from("type,client,tx,amount\n");
@@ -26,13 +27,10 @@ fn bench_csv_parse_throughput(c: &mut Criterion) {
         &iterations,
         |b, _| {
             b.iter(|| {
-                let mut csv_reader = csv::ReaderBuilder::new()
-                    .trim(csv::Trim::All)
-                    .flexible(true)
-                    .from_reader(Cursor::new(&csv_input));
+                let mut csv_reader = CsvU16RowReader::new(Cursor::new(&csv_input));
 
                 let mut total = 0;
-                for _ in csv_reader.byte_records() {
+                while let Some(_) = csv_reader.next().expect("failed to parse row") {
                     total += 1;
                 }
                 total
