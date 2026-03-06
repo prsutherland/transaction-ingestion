@@ -29,11 +29,12 @@ impl<R: BufRead> CsvU16RowReader<R> {
         let mut pending_quote = false;
         let mut in_quotes = false;
 
-        // State for finding the value of the u16 in the first column
-        let mut first_digit_found = false;
-        let mut last_digit_found = false;
-        let mut first_digit = 0;
-        let mut last_digit = 0;
+        // State for extracting client id from column 1 in one pass.
+        // We intentionally accept leading junk like "a123" and route by 123.
+        let mut client_started = false;
+        let mut client_finished = false;
+        let mut client_overflow = false;
+        let mut client_value: u32 = 0;
 
         loop {
             // Read until we find a newline or EOF
@@ -68,7 +69,7 @@ impl<R: BufRead> CsvU16RowReader<R> {
                             self.current_row.pop();
                         }
 
-                        return if !first_digit_found || !last_digit_found {
+                        return if !client_started || client_overflow {
                             if self.row_idx == 1 {
                                 // Header row, skip it
                                 return self.next();
@@ -76,16 +77,13 @@ impl<R: BufRead> CsvU16RowReader<R> {
                                 Err("bad u16 in col0".into())
                             }
                         } else {
-                            let id = parse_u16_ascii(&self.current_row[first_digit..last_digit])
-                                .ok_or_else(|| -> Box<dyn Error> { "bad u16 in col0".into() })?;
-                            Ok(Some((id, self.current_row.as_slice())))
+                            Ok(Some((client_value as u16, self.current_row.as_slice())))
                         };
                     }
                     b',' if !in_quotes => {
                         col += 1;
-                        if col == 2 && first_digit_found && !last_digit_found {
-                            last_digit = self.current_row.len();
-                            last_digit_found = true;
+                        if col == 2 && client_started && !client_finished {
+                            client_finished = true;
                         }
                     }
                     _ => {
@@ -95,16 +93,15 @@ impl<R: BufRead> CsvU16RowReader<R> {
                         // because it is only used for routing to the correct
                         // worker, which will reparse the whole row and
                         // reject invalid rows.
-                        if col == 1 {
-                            if !first_digit_found && *b >= b'0' && *b <= b'9' {
-                                first_digit = self.current_row.len();
-                                first_digit_found = true;
-                            } else if first_digit_found
-                                && !last_digit_found
-                                && (*b < b'0' || *b > b'9')
-                            {
-                                last_digit = self.current_row.len();
-                                last_digit_found = true;
+                        if col == 1 && !client_finished {
+                            if b.is_ascii_digit() {
+                                client_started = true;
+                                client_value = client_value * 10 + (b - b'0') as u32;
+                                if client_value > u16::MAX as u32 {
+                                    client_overflow = true;
+                                }
+                            } else if client_started {
+                                client_finished = true;
                             }
                         }
                     }
@@ -123,7 +120,7 @@ impl<R: BufRead> CsvU16RowReader<R> {
         }
         if self.current_row.is_empty() {
             Ok(None)
-        } else if !first_digit_found || !last_digit_found {
+        } else if !client_started || client_overflow {
             if self.row_idx == 1 {
                 // Header row, skip it, end of file.
                 Ok(None)
@@ -131,29 +128,9 @@ impl<R: BufRead> CsvU16RowReader<R> {
                 Err("bad u16 in col0".into())
             }
         } else {
-            let id = parse_u16_ascii(&self.current_row[first_digit..last_digit])
-                .ok_or_else(|| -> Box<dyn Error> { "bad u16 in col0".into() })?;
-            Ok(Some((id, self.current_row.as_slice())))
+            Ok(Some((client_value as u16, self.current_row.as_slice())))
         }
     }
-}
-
-#[inline]
-fn parse_u16_ascii(bytes: &[u8]) -> Option<u16> {
-    if bytes.is_empty() {
-        return None;
-    }
-    let mut n: u32 = 0;
-    for &b in bytes {
-        if b < b'0' || b > b'9' {
-            return None;
-        }
-        n = n * 10 + (b - b'0') as u32;
-        if n > u16::MAX as u32 {
-            return None;
-        }
-    }
-    Some(n as u16)
 }
 
 #[cfg(test)]
@@ -173,5 +150,18 @@ mod tests {
 
         assert_eq!(record.0, 123);
         assert_eq!(record.1, b"deposit,123,1,1.0");
+    }
+
+    #[test]
+    fn keeps_permissive_client_digit_scan_for_routing() {
+        let input = b"type,client,tx,amount\ndeposit,a123,1,1.0\n";
+        let mut reader = CsvU16RowReader::new(Cursor::new(input.as_slice()));
+
+        let record = reader
+            .next()
+            .expect("reader should parse first data row")
+            .expect("reader should return one data row");
+
+        assert_eq!(record.0, 123);
     }
 }
