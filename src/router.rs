@@ -7,7 +7,7 @@ use std::thread;
 
 use crate::engine::Engine;
 use crate::reader::CsvU16RowReader;
-use crate::transaction::parse_transaction_row_bytes;
+use crate::transaction::{TransactionRecord, TransactionType, parse_transaction_row_bytes_into};
 
 pub fn run(path: &Path, workers: usize) -> Result<(), Box<dyn Error>> {
     run_path_inner(path, workers, true)
@@ -166,6 +166,12 @@ fn worker_loop<R: BufRead>(
 ) {
     let mut engine = Engine::new();
     let mut it = CsvU16RowReader::new(reader);
+    let mut record = TransactionRecord {
+        client: 0,
+        tx: 0,
+        tx_type: TransactionType::Deposit,
+        amount: None,
+    };
 
     loop {
         let next = match it.next() {
@@ -184,13 +190,10 @@ fn worker_loop<R: BufRead>(
             continue;
         }
 
-        let record = match parse_transaction_row_bytes(row_bytes) {
-            Ok(record) => record,
-            Err(e) => {
-                eprintln!("error parsing transaction: {}", e);
-                continue;
-            }
-        };
+        if let Err(e) = parse_transaction_row_bytes_into(row_bytes, &mut record) {
+            eprintln!("error parsing transaction: {}", e);
+            continue;
+        }
 
         if let Err(e) = engine.process_transaction(&record) {
             eprintln!(

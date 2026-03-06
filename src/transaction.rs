@@ -48,6 +48,25 @@ pub fn parse_transaction_record(
 /// it expects unquoted, comma-delimited rows and trims ASCII whitespace
 /// around fields.
 pub fn parse_transaction_row_bytes(row: &[u8]) -> Result<TransactionRecord, Box<dyn Error>> {
+    let mut record = TransactionRecord {
+        client: 0,
+        tx: 0,
+        tx_type: TransactionType::Deposit,
+        amount: None,
+    };
+    parse_transaction_row_bytes_into(row, &mut record)?;
+    Ok(record)
+}
+
+/// Parse a transaction record directly from a CSV row byte slice into an
+/// existing record instance.
+///
+/// Reusing the output record avoids repeated `TransactionRecord` construction
+/// in router worker hot loops.
+pub fn parse_transaction_row_bytes_into(
+    row: &[u8],
+    record: &mut TransactionRecord,
+) -> Result<(), Box<dyn Error>> {
     let mut fields: [&[u8]; 4] = [&[]; 4];
     let mut start = 0usize;
     let mut field_idx = 0usize;
@@ -82,12 +101,12 @@ pub fn parse_transaction_row_bytes(row: &[u8]) -> Result<TransactionRecord, Box<
         parse_amount(None)?
     };
 
-    Ok(TransactionRecord {
-        client,
-        tx,
-        tx_type,
-        amount,
-    })
+    record.client = client;
+    record.tx = tx;
+    record.tx_type = tx_type;
+    record.amount = amount;
+
+    Ok(())
 }
 
 fn de_decimal_str<'de, D>(deserializer: D) -> Result<Option<Decimal>, D::Error>
